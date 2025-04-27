@@ -29,25 +29,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Check for active session on mount
     const checkSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+      try {
+        console.log("Checking for active session...")
 
-      if (session) {
-        // Get user profile data
-        const { data: userData, error } = await supabase.from("users").select("*").eq("id", session.user.id).single()
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
 
-        if (userData) {
-          setUser({
-            id: session.user.id,
-            email: session.user.email!,
-            first_name: userData.first_name,
-            last_name: userData.last_name,
-          })
+        if (session) {
+          console.log("Session found:", session.user.id)
+
+          try {
+            // Get user profile data
+            const { data: userData, error } = await supabase
+              .from("users")
+              .select("*")
+              .eq("id", session.user.id)
+              .single()
+
+            if (userData) {
+              console.log("User profile found:", userData)
+
+              setUser({
+                id: session.user.id,
+                email: session.user.email!,
+                first_name: userData.first_name,
+                last_name: userData.last_name,
+              })
+            } else {
+              console.log("User profile not found, using basic auth info")
+
+              // If we can't find the user profile, just use the basic auth user info
+              setUser({
+                id: session.user.id,
+                email: session.user.email!,
+              })
+            }
+          } catch (err) {
+            console.error("Error fetching user profile:", err)
+
+            // If there's an error, just use the basic auth user info
+            setUser({
+              id: session.user.id,
+              email: session.user.email!,
+            })
+          }
+        } else {
+          console.log("No active session found")
         }
+      } catch (err) {
+        console.error("Error checking session:", err)
+      } finally {
+        setLoading(false)
       }
-
-      setLoading(false)
     }
 
     checkSession()
@@ -56,16 +90,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session) {
-        // Get user profile data
-        const { data: userData, error } = await supabase.from("users").select("*").eq("id", session.user.id).single()
+      console.log("Auth state changed:", event)
 
-        if (userData) {
+      if (session) {
+        console.log("New session:", session.user.id)
+
+        try {
+          // Get user profile data
+          const { data: userData, error } = await supabase.from("users").select("*").eq("id", session.user.id).single()
+
+          if (userData) {
+            console.log("User profile found:", userData)
+
+            setUser({
+              id: session.user.id,
+              email: session.user.email!,
+              first_name: userData.first_name,
+              last_name: userData.last_name,
+            })
+          } else {
+            console.log("User profile not found, using basic auth info")
+
+            // If we can't find the user profile, just use the basic auth user info
+            setUser({
+              id: session.user.id,
+              email: session.user.email!,
+            })
+          }
+        } catch (err) {
+          console.error("Error in auth state change:", err)
+
+          // If there's an error, just use the basic auth user info
           setUser({
             id: session.user.id,
             email: session.user.email!,
-            first_name: userData.first_name,
-            last_name: userData.last_name,
           })
         }
       } else {
@@ -82,56 +140,83 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, firstName: string, lastName: string) => {
     try {
-      const { data, error } = await supabase.auth.signUp({
+      console.log("Starting signup process for:", email)
+
+      // First, create the auth user
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+          },
+        },
+      })
+
+      if (authError) {
+        console.error("Auth signup error:", authError)
+        return { error: authError }
+      }
+
+      if (!authData.user) {
+        console.error("No user returned from auth signup")
+        return { error: new Error("Failed to create user") }
+      }
+
+      console.log("Auth user created successfully:", authData.user.id)
+
+      // Try to create user profile, but don't fail if it doesn't work
+      try {
+        console.log("Attempting to create user profile...")
+
+        // Check if users table exists
+        const { error: checkError } = await supabase.from("users").select("count").limit(1)
+
+        if (!checkError) {
+          // Table exists, try to insert
+          const { error: insertError } = await supabase.from("users").insert({
+            id: authData.user.id,
+            email,
+            first_name: firstName,
+            last_name: lastName,
+            created_at: new Date().toISOString(),
+          })
+
+          if (insertError) {
+            console.error("Error creating user profile:", insertError)
+          } else {
+            console.log("User profile created successfully")
+          }
+        } else {
+          console.log("Users table doesn't exist, skipping profile creation")
+        }
+      } catch (err) {
+        console.error("Exception creating user profile:", err)
+        // Continue anyway, as the auth user is created
+      }
+
+      // Sign in the user after successful signup
+      console.log("Signing in after signup...")
+      const { error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
 
-      if (error) {
-        return { error }
+      if (signInError) {
+        console.error("Error signing in after signup:", signInError)
+        return { error: signInError }
       }
 
-      if (data.user) {
-        // Create user profile
-        const { error: profileError } = await supabase.from("users").insert({
-          id: data.user.id,
-          email,
-          first_name: firstName,
-          last_name: lastName,
-          created_at: new Date().toISOString(),
-        })
+      // Set the user in state
+      setUser({
+        id: authData.user.id,
+        email,
+        first_name: firstName,
+        last_name: lastName,
+      })
 
-        // Store Victor's Bitget credentials
-        const { error: credentialsError } = await supabase.from("api_credentials").insert({
-          user_id: data.user.id,
-          exchange: "bitget",
-          api_key: "bg_1d7ea7c56644fb5da18a400c92a425d7",
-          api_secret: "e9121c2f6018c6844dd631a35583d4113fcfb1b2a8d3761c0ea430ea8fae7d13",
-          passphrase: "Victor9798",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-
-        // Create default settings
-        const { error: settingsError } = await supabase.from("settings").insert({
-          user_id: data.user.id,
-          auto_trading: false,
-          confidence_threshold: 70,
-          max_trade_size: 5,
-          stop_loss: 2.5,
-          take_profit: 5,
-          paper_trading: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-
-        if (profileError || credentialsError || settingsError) {
-          console.error("Error creating user profile:", profileError || credentialsError || settingsError)
-        }
-
-        router.push("/dashboard")
-      }
-
+      router.push("/dashboard")
       return { error: null }
     } catch (error) {
       console.error("Error signing up:", error)
@@ -141,14 +226,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     try {
+      console.log("Signing in:", email)
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
 
       if (error) {
+        console.error("Sign in error:", error)
         return { error }
       }
+
+      console.log("Sign in successful")
 
       router.push("/dashboard")
       return { error: null }
@@ -159,6 +249,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signOut = async () => {
+    console.log("Signing out")
     await supabase.auth.signOut()
     router.push("/login")
   }

@@ -2,14 +2,14 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { TrendingUp } from "lucide-react"
+import { TrendingUp, Loader2, AlertCircle, Info } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
 import { useRouter } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -23,9 +23,35 @@ export default function SignupPage() {
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [dbStatus, setDbStatus] = useState<{ [key: string]: string }>({})
+  const [dbChecked, setDbChecked] = useState(false)
 
   const { signUp } = useAuth()
   const router = useRouter()
+
+  // Check database tables on component mount
+  useEffect(() => {
+    const checkDatabase = async () => {
+      try {
+        console.log("Checking database tables...")
+        const response = await fetch("/api/manual-setup")
+        const data = await response.json()
+
+        if (response.ok) {
+          console.log("Database check result:", data)
+          setDbStatus(data.tables || {})
+        } else {
+          console.error("Database check failed:", data)
+        }
+      } catch (err) {
+        console.error("Error checking database:", err)
+      } finally {
+        setDbChecked(true)
+      }
+    }
+
+    checkDatabase()
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -53,17 +79,23 @@ export default function SignupPage() {
       const { error } = await signUp(email, password, firstName, lastName)
 
       if (error) {
-        setError(error.message)
+        console.error("Signup error:", error)
+        setError(error.message || "An error occurred during signup")
       } else {
         // Redirect will happen in the auth context
       }
-    } catch (err) {
-      setError("An unexpected error occurred. Please try again.")
-      console.error(err)
+    } catch (err: any) {
+      setError(err.message || "An unexpected error occurred. Please try again.")
+      console.error("Signup error:", err)
     } finally {
       setLoading(false)
     }
   }
+
+  // Check if any required tables are missing
+  const missingTables = Object.entries(dbStatus)
+    .filter(([_, status]) => status === "Not found")
+    .map(([table]) => table)
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/50 p-4">
@@ -82,9 +114,21 @@ export default function SignupPage() {
           <CardContent className="space-y-4">
             {error && (
               <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+
+            {missingTables.length > 0 && (
+              <Alert variant="warning" className="bg-amber-50 text-amber-800 border-amber-200">
+                <Info className="h-4 w-4" />
+                <AlertDescription>
+                  Some database tables may not be set up yet. Your account will still be created, but some features may
+                  not work until the database is fully configured.
+                </AlertDescription>
+              </Alert>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="firstName">First name</Label>
@@ -160,8 +204,22 @@ export default function SignupPage() {
             </div>
           </CardContent>
           <CardFooter className="flex flex-col space-y-4">
-            <Button className="w-full bg-emerald-500 hover:bg-emerald-600" type="submit" disabled={loading}>
-              {loading ? "Creating Account..." : "Create Account"}
+            <Button
+              className="w-full bg-emerald-500 hover:bg-emerald-600"
+              type="submit"
+              disabled={loading || !dbChecked}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating Account...
+                </>
+              ) : !dbChecked ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Checking database...
+                </>
+              ) : (
+                "Create Account"
+              )}
             </Button>
             <div className="text-center text-sm">
               Already have an account?{" "}

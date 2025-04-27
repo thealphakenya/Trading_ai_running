@@ -24,14 +24,16 @@ import {
   History,
   Home,
   LineChartIcon,
+  Loader2,
   Power,
   Settings,
   Shield,
   TrendingUp,
+  CheckCircle,
 } from "lucide-react"
 import Link from "next/link"
 import { useAuth } from "@/contexts/auth-context"
-import { getAccountBalance, getKlineData, initWebSocket } from "@/lib/bitget"
+import { getKlineData, initWebSocket } from "@/lib/bitget"
 import { supabase } from "@/lib/supabase"
 
 export default function DashboardPage() {
@@ -47,6 +49,51 @@ export default function DashboardPage() {
   const [priceData, setPriceData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [testingConnection, setTestingConnection] = useState(false)
+
+  // Test Bitget connection
+  const testBitgetConnection = async () => {
+    try {
+      setTestingConnection(true)
+      setError(null)
+
+      console.log("Testing Bitget connection...")
+      const response = await fetch("/api/bitget/test-connection")
+      const data = await response.json()
+
+      if (!data.success) {
+        console.error("Bitget connection test failed:", data)
+        setError(`Failed to connect to Bitget: ${data.message || "Unknown error"}`)
+        setConnectionStatus("error")
+        return false
+      }
+
+      console.log("Bitget connection successful:", data)
+      setConnectionStatus("connected")
+
+      // If we have balance data, set it
+      if (data.balance && data.balance.data) {
+        setAccountBalance(data.balance.data)
+      }
+
+      return true
+    } catch (err) {
+      console.error("Error testing Bitget connection:", err)
+      setError("Failed to connect to Bitget API. Please check your credentials.")
+      setConnectionStatus("error")
+      return false
+    } finally {
+      setTestingConnection(false)
+      setLoading(false)
+    }
+  }
+
+  // Test connection on component mount
+  useEffect(() => {
+    if (user) {
+      testBitgetConnection()
+    }
+  }, [user])
 
   // Fetch user settings from Supabase
   useEffect(() => {
@@ -61,34 +108,6 @@ export default function DashboardPage() {
       }
 
       fetchSettings()
-    }
-  }, [user])
-
-  // Fetch Bitget account balance
-  useEffect(() => {
-    if (user) {
-      const fetchBalance = async () => {
-        try {
-          setLoading(true)
-          const response = await getAccountBalance()
-
-          if (response.code === "00000") {
-            setAccountBalance(response.data)
-            setConnectionStatus("connected")
-          } else {
-            setError(`Failed to connect to Bitget: ${response.msg}`)
-            setConnectionStatus("error")
-          }
-        } catch (err) {
-          console.error("Error fetching account balance:", err)
-          setError("Failed to connect to Bitget API. Please check your credentials.")
-          setConnectionStatus("error")
-        } finally {
-          setLoading(false)
-        }
-      }
-
-      fetchBalance()
     }
   }, [user])
 
@@ -115,31 +134,33 @@ export default function DashboardPage() {
       }
     }
 
-    fetchPriceData()
+    if (connectionStatus === "connected") {
+      fetchPriceData()
 
-    // Set up WebSocket for real-time updates
-    const ws = initWebSocket((data) => {
-      if (data.arg?.channel === "ticker" && data.data) {
-        // Update latest price
-        setPriceData((prevData) => {
-          if (prevData.length === 0) return prevData
+      // Set up WebSocket for real-time updates
+      const ws = initWebSocket((data) => {
+        if (data.arg?.channel === "ticker" && data.data) {
+          // Update latest price
+          setPriceData((prevData) => {
+            if (prevData.length === 0) return prevData
 
-          const newData = [...prevData]
-          const lastIndex = newData.length - 1
-          newData[lastIndex] = {
-            ...newData[lastIndex],
-            price: Number.parseFloat(data.data[0].last),
-          }
+            const newData = [...prevData]
+            const lastIndex = newData.length - 1
+            newData[lastIndex] = {
+              ...newData[lastIndex],
+              price: Number.parseFloat(data.data[0].last),
+            }
 
-          return newData
-        })
+            return newData
+          })
+        }
+      })
+
+      return () => {
+        ws.close()
       }
-    })
-
-    return () => {
-      ws.close()
     }
-  }, [selectedAsset, timeframe])
+  }, [selectedAsset, timeframe, connectionStatus])
 
   // Simulate changing confidence score
   useEffect(() => {
@@ -300,6 +321,10 @@ export default function DashboardPage() {
             <Shield className="h-4 w-4" />
             <span>Security</span>
           </Link>
+          <Link href="/bitget-test" className="flex items-center gap-2 p-2 text-muted-foreground hover:text-foreground">
+            <AlertCircle className="h-4 w-4" />
+            <span>Test Bitget Connection</span>
+          </Link>
         </div>
         <div className="mt-auto p-4 border-t">
           <div className="flex items-center justify-between mb-2">
@@ -317,6 +342,22 @@ export default function DashboardPage() {
             </div>
             <span className="text-sm font-medium capitalize">{connectionStatus}</span>
           </div>
+          <Button
+            variant="outline"
+            className="w-full mb-2"
+            size="sm"
+            onClick={testBitgetConnection}
+            disabled={testingConnection}
+          >
+            {testingConnection ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Testing...
+              </>
+            ) : (
+              <>Test Connection</>
+            )}
+          </Button>
           <Button variant="destructive" className="w-full" size="sm">
             <Power className="h-4 w-4 mr-2" />
             Emergency Stop
@@ -347,7 +388,26 @@ export default function DashboardPage() {
           {error && (
             <Alert variant="destructive" className="mb-6">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription>
+                {error}
+                <Button
+                  variant="link"
+                  className="p-0 h-auto ml-2 text-white underline"
+                  onClick={testBitgetConnection}
+                  disabled={testingConnection}
+                >
+                  {testingConnection ? "Testing..." : "Test connection again"}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {connectionStatus === "connected" && (
+            <Alert variant="default" className="mb-6 bg-emerald-50 text-emerald-800 border-emerald-200">
+              <CheckCircle className="h-4 w-4" />
+              <AlertDescription>
+                Successfully connected to Bitget API. Your account is ready for trading.
+              </AlertDescription>
             </Alert>
           )}
 
@@ -422,6 +482,7 @@ export default function DashboardPage() {
                       saveSettings()
                     }}
                     id="auto-trading"
+                    disabled={connectionStatus !== "connected"}
                   />
                   <Label htmlFor="auto-trading" className="font-medium">
                     {autoTrading ? "Enabled" : "Disabled"}
@@ -524,7 +585,11 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="h-[300px]">
-                  {priceData.length > 0 ? (
+                  {connectionStatus !== "connected" ? (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-muted-foreground">Connect to Bitget to view price data</p>
+                    </div>
+                  ) : priceData.length > 0 ? (
                     <ChartContainer
                       config={{
                         price: {
