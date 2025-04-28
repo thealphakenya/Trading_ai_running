@@ -2,16 +2,15 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { TrendingUp, Loader2, AlertCircle, Info } from "lucide-react"
+import { TrendingUp, Loader2, AlertCircle, CheckCircle, Mail } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
-import { useRouter } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
 export default function SignupPage() {
@@ -23,39 +22,16 @@ export default function SignupPage() {
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [dbStatus, setDbStatus] = useState<{ [key: string]: string }>({})
-  const [dbChecked, setDbChecked] = useState(false)
+  const [emailConfirmationRequired, setEmailConfirmationRequired] = useState(false)
+  const [resendingEmail, setResendingEmail] = useState(false)
+  const [emailResent, setEmailResent] = useState(false)
 
-  const { signUp } = useAuth()
-  const router = useRouter()
-
-  // Check database tables on component mount
-  useEffect(() => {
-    const checkDatabase = async () => {
-      try {
-        console.log("Checking database tables...")
-        const response = await fetch("/api/manual-setup")
-        const data = await response.json()
-
-        if (response.ok) {
-          console.log("Database check result:", data)
-          setDbStatus(data.tables || {})
-        } else {
-          console.error("Database check failed:", data)
-        }
-      } catch (err) {
-        console.error("Error checking database:", err)
-      } finally {
-        setDbChecked(true)
-      }
-    }
-
-    checkDatabase()
-  }, [])
+  const { signUp, resendConfirmationEmail } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    setEmailConfirmationRequired(false)
 
     // Validate form
     if (!firstName || !lastName || !email || !password || !confirmPassword) {
@@ -76,14 +52,22 @@ export default function SignupPage() {
     setLoading(true)
 
     try {
-      const { error } = await signUp(email, password, firstName, lastName)
+      const { error, emailConfirmationRequired: confirmationRequired } = await signUp(
+        email,
+        password,
+        firstName,
+        lastName,
+      )
 
       if (error) {
         console.error("Signup error:", error)
         setError(error.message || "An error occurred during signup")
-      } else {
-        // Redirect will happen in the auth context
+      } else if (confirmationRequired) {
+        // Email confirmation is required
+        setEmailConfirmationRequired(true)
+        setError(null)
       }
+      // If no error and no confirmation required, the user will be redirected to dashboard
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred. Please try again.")
       console.error("Signup error:", err)
@@ -92,10 +76,90 @@ export default function SignupPage() {
     }
   }
 
-  // Check if any required tables are missing
-  const missingTables = Object.entries(dbStatus)
-    .filter(([_, status]) => status === "Not found")
-    .map(([table]) => table)
+  const handleResendEmail = async () => {
+    if (!email) {
+      setError("Please enter your email address to resend the confirmation")
+      return
+    }
+
+    setResendingEmail(true)
+    setEmailResent(false)
+
+    try {
+      const { error } = await resendConfirmationEmail(email)
+
+      if (error) {
+        setError(error.message)
+      } else {
+        setEmailResent(true)
+        setError(null)
+      }
+    } catch (err) {
+      setError("Failed to resend confirmation email. Please try again.")
+      console.error(err)
+    } finally {
+      setResendingEmail(false)
+    }
+  }
+
+  // If email confirmation is required, show a different UI
+  if (emailConfirmationRequired) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-muted/50 p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                <Mail className="h-6 w-6 text-emerald-600" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-bold">Check your email</CardTitle>
+            <CardDescription>
+              We've sent a confirmation email to <span className="font-medium">{email}</span>
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-center text-muted-foreground">
+              Please click the link in the email to verify your account. If you don't see the email, check your spam
+              folder.
+            </p>
+
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            {emailResent && (
+              <Alert className="bg-emerald-50 text-emerald-800 border-emerald-200">
+                <CheckCircle className="h-4 w-4" />
+                <AlertDescription>
+                  Confirmation email has been resent. Please check your inbox and spam folder.
+                </AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+          <CardFooter className="flex flex-col space-y-4">
+            <Button variant="outline" className="w-full" onClick={handleResendEmail} disabled={resendingEmail}>
+              {resendingEmail ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sending...
+                </>
+              ) : (
+                "Resend confirmation email"
+              )}
+            </Button>
+            <div className="text-center text-sm">
+              <Link href="/login" className="text-emerald-500 hover:underline">
+                Back to login
+              </Link>
+            </div>
+          </CardFooter>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/50 p-4">
@@ -116,16 +180,6 @@ export default function SignupPage() {
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            {missingTables.length > 0 && (
-              <Alert variant="warning" className="bg-amber-50 text-amber-800 border-amber-200">
-                <Info className="h-4 w-4" />
-                <AlertDescription>
-                  Some database tables may not be set up yet. Your account will still be created, but some features may
-                  not work until the database is fully configured.
-                </AlertDescription>
               </Alert>
             )}
 
@@ -204,18 +258,10 @@ export default function SignupPage() {
             </div>
           </CardContent>
           <CardFooter className="flex flex-col space-y-4">
-            <Button
-              className="w-full bg-emerald-500 hover:bg-emerald-600"
-              type="submit"
-              disabled={loading || !dbChecked}
-            >
+            <Button className="w-full bg-emerald-500 hover:bg-emerald-600" type="submit" disabled={loading}>
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating Account...
-                </>
-              ) : !dbChecked ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Checking database...
                 </>
               ) : (
                 "Create Account"

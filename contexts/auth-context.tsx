@@ -14,9 +14,15 @@ type User = {
 type AuthContextType = {
   user: User | null
   loading: boolean
-  signUp: (email: string, password: string, firstName: string, lastName: string) => Promise<{ error: any }>
-  signIn: (email: string, password: string) => Promise<{ error: any }>
+  signUp: (
+    email: string,
+    password: string,
+    firstName: string,
+    lastName: string,
+  ) => Promise<{ error: any; emailConfirmationRequired?: boolean }>
+  signIn: (email: string, password: string) => Promise<{ error: any; emailNotConfirmed?: boolean }>
   signOut: () => Promise<void>
+  resendConfirmationEmail: (email: string) => Promise<{ error: any }>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -39,47 +45,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (session) {
           console.log("Session found:", session.user.id)
 
-          try {
-            // Get user profile data
-            const { data: userData, error } = await supabase
-              .from("users")
-              .select("*")
-              .eq("id", session.user.id)
-              .single()
+          // Get user metadata from auth
+          const { first_name, last_name } = session.user.user_metadata || {}
 
-            if (userData) {
-              console.log("User profile found:", userData)
+          // Set user with metadata from auth
+          setUser({
+            id: session.user.id,
+            email: session.user.email!,
+            first_name: first_name || undefined,
+            last_name: last_name || undefined,
+          })
 
-              setUser({
-                id: session.user.id,
-                email: session.user.email!,
-                first_name: userData.first_name,
-                last_name: userData.last_name,
-              })
-            } else {
-              console.log("User profile not found, using basic auth info")
-
-              // If we can't find the user profile, just use the basic auth user info
-              setUser({
-                id: session.user.id,
-                email: session.user.email!,
-              })
-            }
-          } catch (err) {
-            console.error("Error fetching user profile:", err)
-
-            // If there's an error, just use the basic auth user info
-            setUser({
-              id: session.user.id,
-              email: session.user.email!,
-            })
-          }
+          setLoading(false)
         } else {
           console.log("No active session found")
+          setLoading(false)
         }
       } catch (err) {
         console.error("Error checking session:", err)
-      } finally {
         setLoading(false)
       }
     }
@@ -95,37 +78,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session) {
         console.log("New session:", session.user.id)
 
-        try {
-          // Get user profile data
-          const { data: userData, error } = await supabase.from("users").select("*").eq("id", session.user.id).single()
+        // Get user metadata from auth
+        const { first_name, last_name } = session.user.user_metadata || {}
 
-          if (userData) {
-            console.log("User profile found:", userData)
-
-            setUser({
-              id: session.user.id,
-              email: session.user.email!,
-              first_name: userData.first_name,
-              last_name: userData.last_name,
-            })
-          } else {
-            console.log("User profile not found, using basic auth info")
-
-            // If we can't find the user profile, just use the basic auth user info
-            setUser({
-              id: session.user.id,
-              email: session.user.email!,
-            })
-          }
-        } catch (err) {
-          console.error("Error in auth state change:", err)
-
-          // If there's an error, just use the basic auth user info
-          setUser({
-            id: session.user.id,
-            email: session.user.email!,
-          })
-        }
+        // Set user with metadata from auth
+        setUser({
+          id: session.user.id,
+          email: session.user.email!,
+          first_name: first_name || undefined,
+          last_name: last_name || undefined,
+        })
       } else {
         setUser(null)
       }
@@ -142,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       console.log("Starting signup process for:", email)
 
-      // First, create the auth user
+      // Create the auth user with metadata
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
@@ -151,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             first_name: firstName,
             last_name: lastName,
           },
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
       })
 
@@ -166,47 +129,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       console.log("Auth user created successfully:", authData.user.id)
 
-      // Try to create user profile, but don't fail if it doesn't work
-      try {
-        console.log("Attempting to create user profile...")
-
-        // Check if users table exists
-        const { error: checkError } = await supabase.from("users").select("count").limit(1)
-
-        if (!checkError) {
-          // Table exists, try to insert
-          const { error: insertError } = await supabase.from("users").insert({
-            id: authData.user.id,
-            email,
-            first_name: firstName,
-            last_name: lastName,
-            created_at: new Date().toISOString(),
-          })
-
-          if (insertError) {
-            console.error("Error creating user profile:", insertError)
-          } else {
-            console.log("User profile created successfully")
-          }
-        } else {
-          console.log("Users table doesn't exist, skipping profile creation")
+      // Check if email confirmation is required
+      if (authData.session === null) {
+        console.log("Email confirmation required")
+        return {
+          error: null,
+          emailConfirmationRequired: true,
         }
-      } catch (err) {
-        console.error("Exception creating user profile:", err)
-        // Continue anyway, as the auth user is created
       }
 
-      // Sign in the user after successful signup
-      console.log("Signing in after signup...")
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
-
-      if (signInError) {
-        console.error("Error signing in after signup:", signInError)
-        return { error: signInError }
-      }
+      // If we have a session, the user is already confirmed or confirmation is disabled
+      console.log("User is already confirmed or confirmation is disabled")
 
       // Set the user in state
       setUser({
@@ -235,6 +168,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         console.error("Sign in error:", error)
+
+        // Check if the error is about email confirmation
+        if (error.message.includes("Email not confirmed")) {
+          return { error, emailNotConfirmed: true }
+        }
+
         return { error }
       }
 
@@ -248,13 +187,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const resendConfirmationEmail = async (email: string) => {
+    try {
+      console.log("Resending confirmation email to:", email)
+
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: email,
+      })
+
+      if (error) {
+        console.error("Error resending confirmation email:", error)
+        return { error }
+      }
+
+      return { error: null }
+    } catch (error) {
+      console.error("Error resending confirmation email:", error)
+      return { error }
+    }
+  }
+
   const signOut = async () => {
     console.log("Signing out")
     await supabase.auth.signOut()
     router.push("/login")
   }
 
-  return <AuthContext.Provider value={{ user, loading, signUp, signIn, signOut }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={{ user, loading, signUp, signIn, signOut, resendConfirmationEmail }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {
