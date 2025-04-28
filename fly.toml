@@ -1,0 +1,17 @@
+app = "trading-ai-running"
+
+[build]
+  # Specify the build process if needed, e.g., Dockerfile
+  builder = "paketobuildpacks/builder:base"
+
+[env]
+  # Add environment variables here
+  PORT = "8080"
+
+[deploy]
+  # Deployment settings
+  release_command = "npm run migrate"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
