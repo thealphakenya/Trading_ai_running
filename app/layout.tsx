@@ -1,8 +1,7 @@
 import type React from "react"
 import "@/app/globals.css"
 import { Inter } from "next/font/google"
-import { ThemeProvider } from "@/components/theme-provider"
-import { AuthProvider } from "@/contexts/auth-context"
+import ClientLayout from "./client-layout"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -21,9 +20,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          <AuthProvider>{children}</AuthProvider>
-        </ThemeProvider>
+        <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   )

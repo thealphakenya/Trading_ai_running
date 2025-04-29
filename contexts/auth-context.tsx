@@ -55,14 +55,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             first_name: first_name || undefined,
             last_name: last_name || undefined,
           })
-
-          setLoading(false)
         } else {
           console.log("No active session found")
-          setLoading(false)
         }
       } catch (err) {
         console.error("Error checking session:", err)
+      } finally {
         setLoading(false)
       }
     }
@@ -209,9 +207,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signOut = async () => {
-    console.log("Signing out")
-    await supabase.auth.signOut()
-    router.push("/login")
+    try {
+      console.log("Signing out")
+      await supabase.auth.signOut()
+      router.push("/login")
+    } catch (error) {
+      console.error("Error signing out:", error)
+    }
   }
 
   return (
