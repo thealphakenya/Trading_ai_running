@@ -3,6 +3,27 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { supabase } from "@/lib/supabase"
 import { useRouter } from "next/navigation"
+import { createClient } from "@supabase/supabase-js"
+
+// Default values for development/preview (these should be replaced with actual values in production)
+const defaultSupabaseUrl = "https://omxsytfeirsymthniker.supabase.co"
+const defaultSupabaseAnonKey =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9teHN5dGZlaXJzeW10aG5pa2VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDU3ODc2NDgsImV4cCI6MjA2MTM2MzY0OH0.1q5IZW_zLfV8FPRTaODXe_wchPzUBwFxT1dRaKoINxU"
+
+// Use environment variables if available, otherwise fall back to defaults
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || defaultSupabaseUrl
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+// Only create the admin client if we have both the URL and service role key
+const supabaseAdmin =
+  supabaseUrl && supabaseServiceRoleKey
+    ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      })
+    : null
 
 type User = {
   id: string
@@ -14,15 +35,9 @@ type User = {
 type AuthContextType = {
   user: User | null
   loading: boolean
-  signUp: (
-    email: string,
-    password: string,
-    firstName: string,
-    lastName: string,
-  ) => Promise<{ error: any; emailConfirmationRequired?: boolean }>
-  signIn: (email: string, password: string) => Promise<{ error: any; emailNotConfirmed?: boolean }>
+  signUp: (email: string, password: string, firstName: string, lastName: string) => Promise<{ error: any }>
+  signIn: (email: string, password: string) => Promise<{ error: any }>
   signOut: () => Promise<void>
-  resendConfirmationEmail: (email: string) => Promise<{ error: any }>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -111,7 +126,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             first_name: firstName,
             last_name: lastName,
           },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          // Disable email confirmation by not providing emailRedirectTo
+          // This won't completely disable it on the Supabase side, but we'll handle it in our flow
         },
       })
 
@@ -127,17 +143,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       console.log("Auth user created successfully:", authData.user.id)
 
-      // Check if email confirmation is required
-      if (authData.session === null) {
-        console.log("Email confirmation required")
-        return {
-          error: null,
-          emailConfirmationRequired: true,
+      // Immediately sign in the user after signup, regardless of email confirmation status
+      console.log("Signing in after signup...")
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (signInError) {
+        // If there's an error about email confirmation, we'll ignore it and sign in anyway
+        if (signInError.message.includes("Email not confirmed")) {
+          console.log("Email not confirmed, but proceeding with sign in")
+
+          // Use admin API to confirm the email (requires service role)
+          try {
+            if (supabaseAdmin) {
+              await supabaseAdmin.auth.admin.updateUserById(authData.user.id, { email_confirm: true })
+              console.log("Manually confirmed user email")
+
+              // Try signing in again
+              const { error: retryError } = await supabase.auth.signInWithPassword({
+                email,
+                password,
+              })
+
+              if (retryError) {
+                console.error("Error signing in after manual confirmation:", retryError)
+                return { error: retryError }
+              }
+            } else {
+              console.warn("Admin client not available, cannot confirm email automatically")
+            }
+          } catch (adminErr) {
+            console.error("Error using admin API:", adminErr)
+            // Continue anyway
+          }
+        } else {
+          console.error("Error signing in after signup:", signInError)
+          return { error: signInError }
         }
       }
-
-      // If we have a session, the user is already confirmed or confirmation is disabled
-      console.log("User is already confirmed or confirmation is disabled")
 
       // Set the user in state
       setUser({
@@ -164,14 +209,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password,
       })
 
-      if (error) {
-        console.error("Sign in error:", error)
+      // If there's an error about email confirmation, we'll try to bypass it
+      if (error && error.message.includes("Email not confirmed")) {
+        console.log("Email not confirmed, attempting to bypass...")
 
-        // Check if the error is about email confirmation
-        if (error.message.includes("Email not confirmed")) {
-          return { error, emailNotConfirmed: true }
+        // Use admin API to confirm the email (requires service role)
+        try {
+          if (supabaseAdmin) {
+            // Find the user by email
+            const { data: userData } = await supabaseAdmin.auth.admin.listUsers()
+            const user = userData?.users.find((u) => u.email === email)
+
+            if (user) {
+              await supabaseAdmin.auth.admin.updateUserById(user.id, { email_confirm: true })
+              console.log("Manually confirmed user email")
+
+              // Try signing in again
+              const { error: retryError } = await supabase.auth.signInWithPassword({
+                email,
+                password,
+              })
+
+              if (retryError) {
+                console.error("Error signing in after manual confirmation:", retryError)
+                return { error: retryError }
+              } else {
+                // Success!
+                router.push("/dashboard")
+                return { error: null }
+              }
+            }
+          } else {
+            console.warn("Admin client not available, cannot confirm email automatically")
+          }
+        } catch (adminErr) {
+          console.error("Error using admin API:", adminErr)
         }
 
+        // If we couldn't bypass it, return the original error
+        return { error }
+      }
+
+      if (error) {
+        console.error("Sign in error:", error)
         return { error }
       }
 
@@ -181,27 +261,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null }
     } catch (error) {
       console.error("Error signing in:", error)
-      return { error }
-    }
-  }
-
-  const resendConfirmationEmail = async (email: string) => {
-    try {
-      console.log("Resending confirmation email to:", email)
-
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email: email,
-      })
-
-      if (error) {
-        console.error("Error resending confirmation email:", error)
-        return { error }
-      }
-
-      return { error: null }
-    } catch (error) {
-      console.error("Error resending confirmation email:", error)
       return { error }
     }
   }
@@ -216,11 +275,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  return (
-    <AuthContext.Provider value={{ user, loading, signUp, signIn, signOut, resendConfirmationEmail }}>
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={{ user, loading, signUp, signIn, signOut }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

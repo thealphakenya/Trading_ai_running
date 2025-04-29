@@ -9,8 +9,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { TrendingUp, Loader2, AlertCircle, CheckCircle, Mail } from "lucide-react"
+import { TrendingUp, Loader2, AlertCircle } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
+import { useRouter } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
 export default function SignupPage() {
@@ -22,16 +23,13 @@ export default function SignupPage() {
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [emailConfirmationRequired, setEmailConfirmationRequired] = useState(false)
-  const [resendingEmail, setResendingEmail] = useState(false)
-  const [emailResent, setEmailResent] = useState(false)
 
-  const { signUp, resendConfirmationEmail } = useAuth()
+  const { signUp } = useAuth()
+  const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    setEmailConfirmationRequired(false)
 
     // Validate form
     if (!firstName || !lastName || !email || !password || !confirmPassword) {
@@ -52,113 +50,19 @@ export default function SignupPage() {
     setLoading(true)
 
     try {
-      const { error, emailConfirmationRequired: confirmationRequired } = await signUp(
-        email,
-        password,
-        firstName,
-        lastName,
-      )
+      const { error } = await signUp(email, password, firstName, lastName)
 
       if (error) {
         console.error("Signup error:", error)
         setError(error.message || "An error occurred during signup")
-      } else if (confirmationRequired) {
-        // Email confirmation is required
-        setEmailConfirmationRequired(true)
-        setError(null)
       }
-      // If no error and no confirmation required, the user will be redirected to dashboard
+      // If no error, the user will be redirected to dashboard by the auth context
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred. Please try again.")
       console.error("Signup error:", err)
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleResendEmail = async () => {
-    if (!email) {
-      setError("Please enter your email address to resend the confirmation")
-      return
-    }
-
-    setResendingEmail(true)
-    setEmailResent(false)
-
-    try {
-      const { error } = await resendConfirmationEmail(email)
-
-      if (error) {
-        setError(error.message)
-      } else {
-        setEmailResent(true)
-        setError(null)
-      }
-    } catch (err) {
-      setError("Failed to resend confirmation email. Please try again.")
-      console.error(err)
-    } finally {
-      setResendingEmail(false)
-    }
-  }
-
-  // If email confirmation is required, show a different UI
-  if (emailConfirmationRequired) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-muted/50 p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader className="space-y-1 text-center">
-            <div className="flex justify-center mb-4">
-              <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center">
-                <Mail className="h-6 w-6 text-emerald-600" />
-              </div>
-            </div>
-            <CardTitle className="text-2xl font-bold">Check your email</CardTitle>
-            <CardDescription>
-              We've sent a confirmation email to <span className="font-medium">{email}</span>
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-center text-muted-foreground">
-              Please click the link in the email to verify your account. If you don't see the email, check your spam
-              folder.
-            </p>
-
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            {emailResent && (
-              <Alert className="bg-emerald-50 text-emerald-800 border-emerald-200">
-                <CheckCircle className="h-4 w-4" />
-                <AlertDescription>
-                  Confirmation email has been resent. Please check your inbox and spam folder.
-                </AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-          <CardFooter className="flex flex-col space-y-4">
-            <Button variant="outline" className="w-full" onClick={handleResendEmail} disabled={resendingEmail}>
-              {resendingEmail ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sending...
-                </>
-              ) : (
-                "Resend confirmation email"
-              )}
-            </Button>
-            <div className="text-center text-sm">
-              <Link href="/login" className="text-emerald-500 hover:underline">
-                Back to login
-              </Link>
-            </div>
-          </CardFooter>
-        </Card>
-      </div>
-    )
   }
 
   return (

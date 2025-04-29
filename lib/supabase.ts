@@ -33,7 +33,7 @@ export const supabaseAdmin = supabaseServiceRoleKey
         persistSession: false,
       },
     })
-  : null // If no service role key, return null
+  : null
 
 // Helper function to check if admin client is available
 export const isAdminClientAvailable = () => !!supabaseAdmin
