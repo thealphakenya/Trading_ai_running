@@ -1,40 +1,84 @@
 import CryptoJS from "crypto-js"
 
-// Victor's Bitget credentials
-const BITGET_API_KEY = "bg_1d7ea7c56644fb5da18a400c92a425d7"
-const BITGET_SECRET_KEY = "e9121c2f6018c6844dd631a35583d4113fcfb1b2a8d3761c0ea430ea8fae7d13"
-const BITGET_PASSPHRASE = "Victor9798"
+const BITGET_API_KEY = process.env.BITGET_API_KEY!
+const BITGET_SECRET_KEY = process.env.BITGET_SECRET_KEY!
+const BITGET_PASSPHRASE = process.env.BITGET_PASSPHRASE!
 
 const BASE_URL = "https://api.bitget.com"
 
-// Generate signature for Bitget API
+//
+// ========== Types ==========
+//
+type ApiResponse<T = any> = {
+  code: string
+  msg?: string
+  requestTime?: string
+  data: T
+}
+
+type TimeResponse = string
+
+type Balance = {
+  coin: string
+  available: string
+  frozen: string
+  locked: string
+  uTime: string
+}
+
+type SymbolInfo = {
+  symbol: string
+  baseCoin: string
+  quoteCoin: string
+  minTradeAmount: string
+  maxTradeAmount: string
+  priceScale: number
+}
+
+type TickerData = {
+  instId: string
+  last: string
+  open24h: string
+  high24h: string
+  low24h: string
+  bidPr: string
+  askPr: string
+  bidSz: string
+  askSz: string
+  baseVolume: string
+  quoteVolume: string
+  ts: string
+}
+
+type CandleData = [string, string, string, string, string, string] // [timestamp, open, high, low, close, volume]
+
+type OrderResponse = {
+  orderId: string
+  clientOid: string
+}
+
+//
+// ========== Utils ==========
+//
 function generateSignature(timestamp: string, method: string, requestPath: string, body = "") {
-  // Bitget requires the message to be timestamp + method + requestPath + body
   const message = timestamp + method + requestPath + body
-  // Use HMAC-SHA256 to generate the signature and encode it as Base64
   return CryptoJS.enc.Base64.stringify(CryptoJS.HmacSHA256(message, BITGET_SECRET_KEY))
 }
 
-// Make a request to Bitget API
-export async function bitgetRequest(
+async function bitgetRequest<T = any>(
   method: string,
   endpoint: string,
   params: Record<string, any> = {},
   isPrivate = true,
-) {
+): Promise<ApiResponse<T>> {
   try {
-    console.log(`Making Bitget API request: ${method} ${endpoint}`)
-
     const timestamp = Date.now().toString()
-    // Extract the base path without query parameters
-    const requestPath = endpoint.includes("?") ? endpoint.split("?")[0] : endpoint
-
+    const requestPath = endpoint.split("?")[0]
     let url = `${BASE_URL}${endpoint}`
 
-    // For GET requests with params, add them to the URL
     if (method === "GET" && Object.keys(params).length > 0 && !endpoint.includes("?")) {
       const queryString = new URLSearchParams(params).toString()
-      url = `${url}?${queryString}`
+      url += `?${queryString}`
     }
 
     const headers: Record<string, string> = {
@@ -42,7 +86,6 @@ export async function bitgetRequest(
     }
 
     if (isPrivate) {
-      // For private endpoints, we need to add authentication headers
       const body = method === "POST" ? JSON.stringify(params) : ""
       const signature = generateSignature(timestamp, method, requestPath, body)
 
@@ -50,13 +93,6 @@ export async function bitgetRequest(
       headers["ACCESS-SIGN"] = signature
       headers["ACCESS-TIMESTAMP"] = timestamp
       headers["ACCESS-PASSPHRASE"] = BITGET_PASSPHRASE
-    }
-
-    console.log("Request URL:", url)
-    console.log("Request headers:", JSON.stringify(headers))
-
-    if (method === "POST") {
-      console.log("Request body:", JSON.stringify(params))
     }
 
     const options: RequestInit = {
@@ -69,26 +105,19 @@ export async function bitgetRequest(
     }
 
     const response = await fetch(url, options)
-    const data = await response.json()
-
-    console.log("Bitget API response:", JSON.stringify(data))
-
-    return data
-  } catch (error) {
+    return await response.json()
+  } catch (error: any) {
     console.error("Bitget API request failed:", error)
     throw error
   }
 }
 
-// Test connection to Bitget API
+//
+// ========== API Methods ==========
+//
 export async function testConnection() {
   try {
-    console.log("Testing connection to Bitget API")
-
-    // First try a public endpoint that doesn't require authentication
-    const publicResponse = await bitgetRequest("GET", "/api/v2/spot/public/time", {}, false)
-    console.log("Public API test response:", publicResponse)
-
+    const publicResponse = await bitgetRequest<TimeResponse>("GET", "/api/v2/spot/public/time", {}, false)
     if (!publicResponse || publicResponse.code !== "00000") {
       return {
         success: false,
@@ -97,10 +126,7 @@ export async function testConnection() {
       }
     }
 
-    // Then try a private endpoint that requires authentication
     const privateResponse = await getAccountBalance()
-    console.log("Private API test response:", privateResponse)
-
     if (!privateResponse || privateResponse.code !== "00000") {
       return {
         success: false,
@@ -113,11 +139,10 @@ export async function testConnection() {
     return {
       success: true,
       timestamp: publicResponse.data,
-      message: "Successfully connected to Bitget API and authenticated",
+      message: "Successfully connected to Bitget API",
       accountData: privateResponse.data,
     }
-  } catch (error) {
-    console.error("Failed to connect to Bitget API:", error)
+  } catch (error: any) {
     return {
       success: false,
       error: error.message,
@@ -126,56 +151,27 @@ export async function testConnection() {
   }
 }
 
-// Get account balance
 export async function getAccountBalance() {
-  try {
-    console.log("Getting account balance from Bitget")
-    return await bitgetRequest("GET", "/api/v2/spot/account/assets")
-  } catch (error) {
-    console.error("Failed to get account balance:", error)
-    throw error
-  }
+  return await bitgetRequest<Balance[]>("GET", "/api/v2/spot/account/assets")
 }
 
-// Get trading pairs
 export async function getTradingPairs() {
-  try {
-    console.log("Getting trading pairs from Bitget")
-    return await bitgetRequest("GET", "/api/v2/spot/public/symbols", {}, false)
-  } catch (error) {
-    console.error("Failed to get trading pairs:", error)
-    throw error
-  }
+  return await bitgetRequest<SymbolInfo[]>("GET", "/api/v2/spot/public/symbols", {}, false)
 }
 
-// Get market ticker
 export async function getMarketTicker(symbol: string) {
-  try {
-    console.log(`Getting market ticker for ${symbol} from Bitget`)
-    return await bitgetRequest("GET", `/api/v2/spot/market/ticker?symbol=${symbol}`, {}, false)
-  } catch (error) {
-    console.error(`Failed to get market ticker for ${symbol}:`, error)
-    throw error
-  }
+  return await bitgetRequest<TickerData[]>("GET", `/api/v2/spot/market/ticker?symbol=${symbol}`, {}, false)
 }
 
-// Get historical candle data
 export async function getKlineData(symbol: string, period: string, limit = 100) {
-  try {
-    console.log(`Getting kline data for ${symbol} (${period}) from Bitget`)
-    return await bitgetRequest(
-      "GET",
-      `/api/v2/spot/market/candles?symbol=${symbol}&period=${period}&limit=${limit}`,
-      {},
-      false,
-    )
-  } catch (error) {
-    console.error(`Failed to get kline data for ${symbol}:`, error)
-    throw error
-  }
+  return await bitgetRequest<CandleData[]>(
+    "GET",
+    `/api/v2/spot/market/candles?symbol=${symbol}&period=${period}&limit=${limit}`,
+    {},
+    false,
+  )
 }
 
-// Place an order
 export async function placeOrder(
   symbol: string,
   side: "buy" | "sell",
@@ -183,81 +179,56 @@ export async function placeOrder(
   size: string,
   price?: string,
 ) {
-  try {
-    console.log(`Placing ${side} order for ${symbol} on Bitget`)
-
-    const params: Record<string, any> = {
-      symbol,
-      side,
-      orderType,
-      size,
-    }
-
-    if (orderType === "limit" && price) {
-      params.price = price
-    }
-
-    return await bitgetRequest("POST", "/api/v2/spot/trade/orders", params)
-  } catch (error) {
-    console.error(`Failed to place order for ${symbol}:`, error)
-    throw error
+  const params: Record<string, any> = {
+    symbol,
+    side,
+    orderType,
+    size,
   }
+
+  if (orderType === "limit" && price) {
+    params.price = price
+  }
+
+  return await bitgetRequest<OrderResponse>("POST", "/api/v2/spot/trade/orders", params)
 }
 
-// Initialize WebSocket connection
-export function initWebSocket(onMessage: (data: any) => void) {
+//
+// ========== WebSocket ==========
+//
+export function initWebSocket(
+  onMessage: (data: any) => void,
+  symbols: string[] = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+): WebSocket {
   try {
-    console.log("Initializing Bitget WebSocket connection")
     const ws = new WebSocket("wss://ws.bitget.com/spot/v1/stream")
 
     ws.onopen = () => {
       console.log("WebSocket connected")
 
-      // Keep connection alive with ping
+      const args = symbols.map((symbol) => ({
+        channel: "ticker",
+        instId: symbol,
+      }))
+
+      ws.send(JSON.stringify({ op: "subscribe", args }))
+
       const pingInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ op: "ping" }))
         }
       }, 20000)
 
-      // Subscribe to tickers
-      ws.send(
-        JSON.stringify({
-          op: "subscribe",
-          args: [
-            {
-              channel: "ticker",
-              instId: "BTCUSDT",
-            },
-            {
-              channel: "ticker",
-              instId: "ETHUSDT",
-            },
-            {
-              channel: "ticker",
-              instId: "SOLUSDT",
-            },
-          ],
-        }),
-      )(
-        // Store the interval ID so we can clear it when the connection closes
-        ws as any,
-      ).pingInterval = pingInterval
+      ;(ws as any).pingInterval = pingInterval
     }
 
     ws.onmessage = (event) => {
+      if (event.data === '{"event":"pong"}') return
       try {
-        // Handle pong response
-        if (event.data === '{"event":"pong"}') {
-          console.log("Received pong from WebSocket")
-          return
-        }
-
         const data = JSON.parse(event.data)
-        console.log("WebSocket message received:", data)
         onMessage(data)
       } catch (error) {
-        console.error("Error parsing WebSocket message:", error)
+        console.error("WebSocket message parse error:", error)
       }
     }
 
@@ -267,24 +238,18 @@ export function initWebSocket(onMessage: (data: any) => void) {
 
     ws.onclose = () => {
       console.log("WebSocket closed")
-
-      // Clear the ping interval
       if ((ws as any).pingInterval) {
         clearInterval((ws as any).pingInterval)
       }
-
-      // Attempt to reconnect after a delay
       setTimeout(() => {
-        console.log("Attempting to reconnect WebSocket")
-        initWebSocket(onMessage)
+        console.log("Reconnecting WebSocket...")
+        initWebSocket(onMessage, symbols)
       }, 5000)
     }
 
     return ws
   } catch (error) {
-    console.error("Failed to initialize WebSocket:", error)
-
-    // Return a dummy WebSocket object that won't cause errors if methods are called on it
+    console.error("WebSocket init failed:", error)
     return {
       close: () => {},
       send: () => {},
