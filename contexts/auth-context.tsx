@@ -45,6 +45,7 @@ type AuthContextType = {
   signUp: (email: string, password: string, firstName: string, lastName: string) => Promise<{ error: any }>
   signIn: (email: string, password: string) => Promise<{ error: any }>
   signOut: () => Promise<void>
+  resendConfirmationEmail: (email: string) => Promise<{ error: any }>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -170,7 +171,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  return <AuthContext.Provider value={{ user, loading, signUp, signIn, signOut }}>{children}</AuthContext.Provider>
+  const resendConfirmationEmail = async (email: string) => {
+    try {
+      if (!supabaseAdmin) {
+        throw new Error("Supabase admin client is not configured")
+      }
+
+      const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers()
+      if (listError) {
+        throw listError
+      }
+
+      const user = users?.users.find((u) => u.email === email)
+      if (!user) {
+        throw new Error("User not found")
+      }
+
+      // Workaround to trigger confirmation email by updating the user's email
+      const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+        email: user.email,
+      })
+      if (updateError) {
+        throw updateError
+      }
+
+      return { error: null }
+    } catch (error) {
+      return { error }
+    }
+  }
+
+  return (
+    <AuthContext.Provider value={{ user, loading, signUp, signIn, signOut, resendConfirmationEmail }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {
