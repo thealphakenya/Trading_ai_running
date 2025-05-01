@@ -20,6 +20,7 @@ export default function DashboardPage() {
   const [systemLogs, setSystemLogs] = useState<any[]>([])
   const [currentConfidence, setCurrentConfidence] = useState<number>(75)
   const [confidenceThreshold] = useState<number>(70)
+  const [bitgetConnected, setBitgetConnected] = useState<boolean>(false)
 
   useEffect(() => {
     if (!loading && !user) {
@@ -55,7 +56,31 @@ export default function DashboardPage() {
     fetchSystemLogs()
   }, [])
 
+  useEffect(() => {
+    // Verify Bitget connection
+    const verifyBitgetConnection = async () => {
+      try {
+        const response = await fetch("/api/bitget/test-connection");
+        const data = await response.json();
+        setBitgetConnected(data.success);
+      } catch (error) {
+        console.error("Error verifying Bitget connection:", error);
+        setBitgetConnected(false);
+      }
+    };
+
+    verifyBitgetConnection();
+  }, []);
+
   if (loading) return <p>Loading...</p>
+
+  if (!bitgetConnected) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-red-500">Unable to connect to Bitget. Please check your API credentials.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col">
